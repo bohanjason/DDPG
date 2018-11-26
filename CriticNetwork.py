@@ -8,7 +8,7 @@ from keras.optimizers import Adam
 import keras.backend as K
 import tensorflow as tf
 
-HIDDEN_SIZE = 16
+HIDDEN_SIZE = 32
 
 class CriticNetwork(object):
     def __init__(self, sess, state_size, action_size, BATCH_SIZE, TAU, LEARNING_RATE):
@@ -36,9 +36,17 @@ class CriticNetwork(object):
     def target_train(self):
         critic_weights = self.model.get_weights()
         critic_target_weights = self.target_model.get_weights()
-        for i in xrange(len(critic_weights)):
+        for i in range(len(critic_weights)):
             critic_target_weights[i] = self.TAU * critic_weights[i] + (1 - self.TAU)* critic_target_weights[i]
         self.target_model.set_weights(critic_target_weights)
+
+    def save_model_weights(self, suffix):
+        # Helper function to save your model / weights. 
+        self.model.save_weights(suffix)
+
+    def load_model_weights(self, weight_file):
+        # Helper funciton to load model weights. 
+        self.model.load_weights(weight_file)
 
     def create_critic_network(self, state_size,action_dim):
         print("Now we build the model")

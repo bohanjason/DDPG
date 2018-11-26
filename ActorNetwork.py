@@ -7,7 +7,7 @@ from keras.optimizers import Adam
 import tensorflow as tf
 import keras.backend as K
 
-HIDDEN_SIZE = 16
+HIDDEN_SIZE = 32
 
 
 class ActorNetwork(object):
@@ -39,9 +39,17 @@ class ActorNetwork(object):
     def target_train(self):
         actor_weights = self.model.get_weights()
         actor_target_weights = self.target_model.get_weights()
-        for i in xrange(len(actor_weights)):
+        for i in range(len(actor_weights)):
             actor_target_weights[i] = self.TAU * actor_weights[i] + (1 - self.TAU)* actor_target_weights[i]
         self.target_model.set_weights(actor_target_weights)
+
+    def load_model_weights(self, weight_file):
+        # Helper funciton to load model weights. 
+        self.model.load_weights(weight_file)
+
+    def save_model_weights(self, suffix):
+        # Helper function to save your model / weights. 
+        self.model.save_weights(suffix)
 
     def create_actor_network(self, state_size,action_dim):
         print("Now we build the model")

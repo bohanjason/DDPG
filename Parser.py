@@ -52,6 +52,7 @@ class Parser(object):
         if knob_type == 'integer':
             return self.convert_int(value)
         elif knob_type == 'size':
+            value = int(round(value))
             return self.convert_size(value)
         else:
             raise Exception('Knob Type does not support')

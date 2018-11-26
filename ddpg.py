@@ -7,6 +7,8 @@ from keras.layers.core import Dense, Dropout, Activation, Flatten
 from keras.optimizers import Adam
 import tensorflow as tf
 import json
+import copy
+
 
 from ReplayBuffer import ReplayBuffer
 from ActorNetwork import ActorNetwork
@@ -16,8 +18,9 @@ from Parser import Parser
 import timeit
 
 
-min_vals = np.array([0, '64MB', '64MB', '4MB'])
+min_vals = np.array([2, '128MB', '4GB', '4MB'])
 max_vals = np.array([8, '30GB', '30GB', '1GB'])
+default_vals = np.array([2, '128MB', '4GB', '4MB'])
 knob_names = ['max_parallel_workers_per_gather', 'shared_buffers', 'effective_cache_size', 'work_mem']
 knob_types = ['integer', 'size', 'size', 'size']
 
@@ -54,29 +57,46 @@ def get_config_knobs(knob_vals):
         config_knobs.append(knob_val)
     return config_knobs
 
-def playGame(train_indicator=0):    #1 means Train, 0 means simply Run
-    BUFFER_SIZE = 100000
+
+def load_weights(actor, critic, actor_file="actor_weights.json",
+                 critic_file="critic_weights.json"):
+    try:
+        actor.model.load_weights(actor_file)
+        critic.model.load_weights(critic_file)
+        actor.target_model.load_weights(actor_file)
+        critic.target_model.load_weights(critic_file)
+        print("Weight load successfully")
+    except:
+        print("Cannot find the weight")
+
+
+def ddpgTune(): 
+    DEBUG = True    #Print intermediate results for debugging
+    BUFFER_SIZE = 10000
     BATCH_SIZE = 32
-    GAMMA = 1.0 #0.99
+    GAMMA = 1.0     #Discount Factor
     TAU = 0.001     #Target Network HyperParameters
     LRA = 0.0001    #Learning rate for Actor  1/32 ~ 0.03
     LRC = 0.001     #Lerning rate for Critic
 
-    action_dim = 1  # increase value (0,1)
-    state_dim = 4  # of tuning knobs
+    action_dim = 1  # set value (0,1)
+    tuning_knobs_num = 4 # of tuning knobs
+    # state = (tuning_knobs_value, current_knob_id)
+    state_dim = tuning_knobs_num + 1 # of state
 
     np.random.seed(1234)
 
 
-    episode_count = 3#2000
+    episode_count = 2 #000
     
-
+    # Exploration
     step = 0
     epsilon_begin = 0.5
     epsilon_end = 0.05
-    epsilon_iters = 1000
+    epsilon_iters = 1000 # 4 * episode
 
-    indicator = 0
+
+    default_latency = 0.  # ms
 
     #Tensorflow GPU optimization
     config = tf.ConfigProto()
@@ -92,16 +112,9 @@ def playGame(train_indicator=0):    #1 means Train, 0 means simply Run
     # Generate a OtterTune environment
     env = OtterTuneEnv(min_raw_vals, max_raw_vals, knob_names)
 
-    #Now load the weight
-    print("Now we load the weight")
-    try:
-        actor.model.load_weights("actormodel.json")
-        critic.model.load_weights("criticmodel.json")
-        actor.target_model.load_weights("actormodel.json")
-        critic.target_model.load_weights("criticmodel.json")
-        print("Weight load successfully")
-    except:
-        print("Cannot find the weight")
+    # Now load the weight
+    #print("Now we load the weight")
+    # load_weights(actor, critic)
 
     print("OtterTune Experiment Start.")
     for episode_i in range(episode_count):
@@ -123,9 +136,8 @@ def playGame(train_indicator=0):    #1 means Train, 0 means simply Run
             action = epsilon_greedy_policy(policy_action, epsilon)
             nextstate, reward, is_terminal, debug_info = env.step(action, current_state)
             transition = [current_state, action, reward, nextstate, is_terminal]
-            buffs.append(transition)
             X_samples, X_currstates, X_nextstates, X_rewards, X_actions = buff.sample_batch()
-            
+            # print(X_samples)    
             if len(X_samples) > 0:
 
                 X_nextactions = actor.target_model.predict(np.array(X_nextstates), batch_size=len(X_nextstates))
@@ -143,9 +155,6 @@ def playGame(train_indicator=0):    #1 means Train, 0 means simply Run
                 # update critic network
                 critic.model.fit([np.array(X_currstates), np.array(X_actions)], np.array(Y_minibatch), batch_size=len(X_currstates), epochs=1, verbose=0)
                 
-                # Test
-                #print(X_currstates)
-
                 a_for_grad = actor.model.predict([np.array(X_currstates)], batch_size=len(X_currstates))
                 grads = critic.gradients(X_currstates, a_for_grad)
                 mean_grads = 1.0 / len(X_currstates) * grads
@@ -153,36 +162,57 @@ def playGame(train_indicator=0):    #1 means Train, 0 means simply Run
                 actor.train(X_currstates, mean_grads)
                 actor.target_train()
                 critic.target_train()
+            else: # initial default config
+                print ('initial state')
+                tmp_current_state = copy.copy(initial_state)
+                tmp_next_state = copy.copy(initial_state)
+                tmp_current_state[tuning_knobs_num] = step 
+                tmp_next_state[tuning_knobs_num] = step + 1 
+                transition = [tmp_current_state, initial_state[step], 0, tmp_next_state, is_terminal]
+                nextstate = initial_state
 
+
+            buffs.append(transition)
             episode_reward += reward
             current_state = nextstate
+
+            if DEBUG is True:
+                print("Episode", episode_i, "Step", step,
+                      "Reward", reward, "Sample Size", len(X_samples))
             step += 1
-            print("Episode", episode_i, "Step", step, "Reward", reward, "Sample Size", len(X_samples))
-            print("\n\n")
+            #    print("\n\n")
             if is_terminal:
                 break
 
 
-        print (current_state)
+        # print (current_state)
         # convert current knob to config knob
-        rescaled_vals = Parser().rescaled(min_raw_vals, max_raw_vals, current_state)
+        rescaled_vals = Parser().rescaled(min_raw_vals, max_raw_vals, current_state[:tuning_knobs_num])
         config_vals = get_config_knobs(rescaled_vals)
 
-        print (rescaled_vals)
         print (config_vals)
 
         env.change_conf(config_vals)
-        # run oltpbench to get reward
+        
+        # run tpch query to get reward
+        config_reward = env.run_experiment()
+        if episode_i == 0:
+            default_reward = config_reward
 
-        config_reward = 2 # TO DO 
-
+        # scaled reward, latency: 1 - new/default
+        scaled_reward = 1 - config_reward * 1.0 / default_reward
+        print('reward ', config_reward, 'scaled ', scaled_reward)
         for transition in buffs:
-            transition[2] = config_reward
+            transition[2] = scaled_reward
             buff.append(transition)
-            #print transition
+        #    print (transition)
+    
+        # save, udf and upload
+        env.save_and_upload()
 
-
+    actor.save_model_weights('actor_weights.json')
+    critic.save_model_weights('critic_weights.json')
     print("Finish.")
 
 if __name__ == "__main__":
-    playGame()
+    ddpgTune()
