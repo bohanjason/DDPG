@@ -18,8 +18,8 @@ from Parser import Parser
 import timeit
 
 
-min_vals = np.array([1, '64MB', '1GB', '2MB'])
-max_vals = np.array([8, '30GB', '30GB', '1GB'])
+min_vals = np.array([2, '128MB', '4GB', '4MB'])
+max_vals = np.array([8, '24GB', '30GB', '1GB'])
 default_vals = np.array([2, '128MB', '4GB', '4MB'])
 knob_names = ['max_parallel_workers_per_gather', 'shared_buffers', 'effective_cache_size', 'work_mem']
 knob_types = ['integer', 'size', 'size', 'size']
@@ -93,13 +93,19 @@ def ddpgTune():
 
 
     episode_count = 2 #000
-    
-    # Exploration
     step = 0
+
+    # Exploration
+    explore_episodes = 50
+    explore_iters = tuning_knobs_num * explore_episodes
+    
+    # Exploration, epsilon greedy
     epsilon_begin = 0.5
     epsilon_end = 0.05
-    epsilon_iters = 1000 # 4 * episode
 
+    # Exploration, gaussian noise
+    sigma_begin = 0.3
+    sigma_end = 0
 
     default_latency = 0.  # ms
 
@@ -132,18 +138,26 @@ def ddpgTune():
         buffs = []
         while True:
 
-            if step > epsilon_iters:
+            if step > explore_iters:
                 epsilon = epsilon_end
+                sigma = sigma_end
             else:
-                epsilon = epsilon_begin - (epsilon_begin - epsilon_end) * 1.0 * step / epsilon_iters
-
+                epsilon = epsilon_begin - (epsilon_begin - epsilon_end) * 1.0 * step / explore_iters
+                sigma = sigma_begin - (sigma_begin - sigma_end) * 1.0 * step / explore_iters
             policy_action = actor.model.predict(np.array([current_state]), batch_size=1)[0]
-            # epsilon greedy
-            action = epsilon_greedy_policy(policy_action, epsilon)
+            # epsilon greedy for exploration
+            # action = epsilon_greedy_policy(policy_action, epsilon)
+            
+            # gaussian noise for exploration 
+            action = policy_action + sigma * np.random.randn(1)[0]
+
+            # constraint [0, 1]
+            action = min(action, 1.0)
+            action = max(action, 0.0)
+
             nextstate, reward, is_terminal, debug_info = env.step(action, current_state)
             transition = [current_state, action, reward, nextstate, is_terminal]
             X_samples, X_currstates, X_nextstates, X_rewards, X_actions = buff.sample_batch()
-            # print(X_samples)    
             if len(X_samples) > 0:
                 X_nextactions = actor.target_model.predict(np.array(X_nextstates), batch_size=len(X_nextstates))
                 Y_nextstates = critic.target_model.predict([np.array(X_nextstates), np.array(X_nextactions)], batch_size=len(X_nextstates))
@@ -209,7 +223,7 @@ def ddpgTune():
         for transition in buffs:
             transition[2] = scaled_reward
             buff.append(transition)
-            print (transition)
+            # print (transition)
     
         # save, udf and upload
         env.save_and_upload()
