@@ -18,7 +18,7 @@ from Parser import Parser
 import timeit
 
 
-min_vals = np.array([2, '128MB', '4GB', '4MB'])
+min_vals = np.array([1, '64MB', '1GB', '2MB'])
 max_vals = np.array([8, '30GB', '30GB', '1GB'])
 default_vals = np.array([2, '128MB', '4GB', '4MB'])
 knob_names = ['max_parallel_workers_per_gather', 'shared_buffers', 'effective_cache_size', 'work_mem']
@@ -35,17 +35,22 @@ def epsilon_greedy_policy(policy_action, epsilon):
         action = policy_action
     return action
 
-def get_range_raw(min_vals, max_vals):
+def get_range_raw(min_vals, max_vals, default_vals):
     min_raw_vals = []
     max_raw_vals = []
+    default_raw_vals = []
     for i in range(len(min_vals)):
         min_raw_val = Parser().get_knob_raw(min_vals[i], knob_types[i])
         max_raw_val = Parser().get_knob_raw(max_vals[i], knob_types[i])
+        default_raw_val = Parser().get_knob_raw(default_vals[i], knob_types[i])
         min_raw_vals.append(min_raw_val)
         max_raw_vals.append(max_raw_val)
-    return min_raw_vals, max_raw_vals
+        default_raw_vals.append(default_raw_val)
+    return min_raw_vals, max_raw_vals, default_raw_vals
 
-min_raw_vals, max_raw_vals = get_range_raw(min_vals, max_vals)
+min_raw_vals, max_raw_vals, default_raw_vals = get_range_raw(min_vals, max_vals, default_vals)
+
+print(default_raw_vals)
 print(min_raw_vals)
 print(max_raw_vals)
 
@@ -110,7 +115,7 @@ def ddpgTune():
     buff = ReplayBuffer(BUFFER_SIZE)    #Create replay buffer
 
     # Generate a OtterTune environment
-    env = OtterTuneEnv(min_raw_vals, max_raw_vals, knob_names)
+    env = OtterTuneEnv(min_raw_vals, max_raw_vals, default_raw_vals, knob_names)
 
     # Now load the weight
     #print("Now we load the weight")
@@ -133,13 +138,13 @@ def ddpgTune():
                 epsilon = epsilon_begin - (epsilon_begin - epsilon_end) * 1.0 * step / epsilon_iters
 
             policy_action = actor.model.predict(np.array([current_state]), batch_size=1)[0]
+            # epsilon greedy
             action = epsilon_greedy_policy(policy_action, epsilon)
             nextstate, reward, is_terminal, debug_info = env.step(action, current_state)
             transition = [current_state, action, reward, nextstate, is_terminal]
             X_samples, X_currstates, X_nextstates, X_rewards, X_actions = buff.sample_batch()
             # print(X_samples)    
             if len(X_samples) > 0:
-
                 X_nextactions = actor.target_model.predict(np.array(X_nextstates), batch_size=len(X_nextstates))
                 Y_nextstates = critic.target_model.predict([np.array(X_nextstates), np.array(X_nextactions)], batch_size=len(X_nextstates))
                 Y_minibatch = np.zeros([len(X_samples), 1])
@@ -180,7 +185,6 @@ def ddpgTune():
                 print("Episode", episode_i, "Step", step,
                       "Reward", reward, "Sample Size", len(X_samples))
             step += 1
-            #    print("\n\n")
             if is_terminal:
                 break
 
@@ -205,7 +209,7 @@ def ddpgTune():
         for transition in buffs:
             transition[2] = scaled_reward
             buff.append(transition)
-        #    print (transition)
+            print (transition)
     
         # save, udf and upload
         env.save_and_upload()

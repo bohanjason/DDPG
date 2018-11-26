@@ -4,6 +4,7 @@ from fabric.api import (env, local, task, lcd)
 import json
 from multiprocessing import Process
 import time
+from Parser import Parser
 
 
 
@@ -77,9 +78,10 @@ def add_udf():
 
 
 class OtterTuneEnv(object):
-    def __init__(self, min_vals, max_vals, knob_names):
+    def __init__(self, min_vals, max_vals, default_vals, knob_names):
         self.min_vals = np.array(min_vals)
         self.max_vals = np.array(max_vals)
+        self.default_vals = np.array(default_vals)
         self.knob_names = np.array(knob_names)
         self.N = len(knob_names)
         self.knob_id = 0
@@ -90,7 +92,11 @@ class OtterTuneEnv(object):
 
     def reset(self):
         self.knob_id = 0
-        return np.zeros(self.N + 1)
+        # initial state is default config
+        initial_state = np.zeros(self.N + 1)
+        scaled_vals = Parser().scaled(self.min_vals, self.max_vals, self.default_vals)
+        initial_state[:self.N] = scaled_vals
+        return initial_state
 
     def step(self, action, state):
         '''

@@ -19,6 +19,11 @@ class Parser(object):
         scaled_vals = np.array(scaled_vals)
         return min_vals + scaled_vals * (max_vals - min_vals)
 
+    def scaled(self, min_vals, max_vals, vals):
+        min_vals = np.array(min_vals)
+        max_vals = np.array(max_vals)
+        vals = np.array(vals)
+        return (vals - min_vals) * 1.0 / (max_vals - min_vals)
 
     def get_raw_size(self, value, system):
         for factor, suffix in system:
