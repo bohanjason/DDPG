@@ -33,7 +33,14 @@ def epsilon_greedy_policy(policy_action, epsilon):
         action = np.random.uniform()
     else:
         action = policy_action
-    return action
+    return action, is_random
+
+
+def gaussian_noise_policy(policy_action, sigma):
+    noise = sigma * np.random.randn(1)[0]
+    action = policy_action + noise
+    return action, noise
+
 
 def get_range_raw(min_vals, max_vals, default_vals):
     min_raw_vals = []
@@ -75,13 +82,26 @@ def load_weights(actor, critic, actor_file="actor_weights.json",
         print("Cannot find the weight")
 
 
+def set_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    tf.set_random_seed(seed)
+
+
+def write_log(f, current_state, readable_state, episode_i):
+    f.write('{}: [{}, {}, {}, {}], [{}, {}, {}, {}]\n'.format(episode_i,
+        current_state[0], current_state[1], current_state[2], current_state[3],
+        readable_state[0], readable_state[1], readable_state[2], readable_state[3]))
+    f.flush()
+
+
 def ddpgTune(): 
     DEBUG = True    #Print intermediate results for debugging
     BUFFER_SIZE = 10000
     BATCH_SIZE = 32
     GAMMA = 1.0     #Discount Factor
     TAU = 0.001     #Target Network HyperParameters
-    LRA = 0.0001    #Learning rate for Actor  1/32 ~ 0.03
+    LRA = 0.0001    #Learning rate for Actor  1/32 ~ 0.03  , 0.0001
     LRC = 0.001     #Lerning rate for Critic
 
     action_dim = 1  # set value (0,1)
@@ -89,14 +109,14 @@ def ddpgTune():
     # state = (tuning_knobs_value, current_knob_id)
     state_dim = tuning_knobs_num + 1 # of state
 
-    np.random.seed(1234)
+    seed = 1234
+    set_seed(seed)
 
-
-    episode_count = 2 #000
+    episode_count = 3 #400 #000
     step = 0
 
     # Exploration
-    explore_episodes = 50
+    explore_episodes = 250
     explore_iters = tuning_knobs_num * explore_episodes
     
     # Exploration, epsilon greedy
@@ -126,6 +146,7 @@ def ddpgTune():
     # Now load the weight
     #print("Now we load the weight")
     # load_weights(actor, critic)
+    f = open('w.log', 'w')
 
     print("OtterTune Experiment Start.")
     for episode_i in range(episode_count):
@@ -144,12 +165,12 @@ def ddpgTune():
             else:
                 epsilon = epsilon_begin - (epsilon_begin - epsilon_end) * 1.0 * step / explore_iters
                 sigma = sigma_begin - (sigma_begin - sigma_end) * 1.0 * step / explore_iters
-            policy_action = actor.model.predict(np.array([current_state]), batch_size=1)[0]
+            policy_action = actor.model.predict(np.array([current_state]), batch_size=1)[0][0]
             # epsilon greedy for exploration
-            # action = epsilon_greedy_policy(policy_action, epsilon)
+            action, is_random = epsilon_greedy_policy(policy_action, epsilon)
             
             # gaussian noise for exploration 
-            action = policy_action + sigma * np.random.randn(1)[0]
+            # action, is_random = gaussian_noise_policy(policy_action, sigma)
 
             # constraint [0, 1]
             action = min(action, 1.0)
@@ -157,7 +178,7 @@ def ddpgTune():
 
             nextstate, reward, is_terminal, debug_info = env.step(action, current_state)
             transition = [current_state, action, reward, nextstate, is_terminal]
-            X_samples, X_currstates, X_nextstates, X_rewards, X_actions = buff.sample_batch()
+            X_samples, X_currstates, X_nextstates, X_rewards, X_actions = buff.sample_batch(batch_size=BATCH_SIZE)
             if len(X_samples) > 0:
                 X_nextactions = actor.target_model.predict(np.array(X_nextstates), batch_size=len(X_nextstates))
                 Y_nextstates = critic.target_model.predict([np.array(X_nextstates), np.array(X_nextactions)], batch_size=len(X_nextstates))
@@ -197,19 +218,21 @@ def ddpgTune():
 
             if DEBUG is True:
                 print("Episode", episode_i, "Step", step,
+                      "Action", action, "Random", is_random,
                       "Reward", reward, "Sample Size", len(X_samples))
             step += 1
             if is_terminal:
                 break
 
 
-        # print (current_state)
+        print (current_state)
         # convert current knob to config knob
         rescaled_vals = Parser().rescaled(min_raw_vals, max_raw_vals, current_state[:tuning_knobs_num])
         config_vals = get_config_knobs(rescaled_vals)
 
         print (config_vals)
-
+        write_log(f, current_state, config_vals, episode_i)
+        #f.write(current_state)
         env.change_conf(config_vals)
         
         # run tpch query to get reward
@@ -223,11 +246,11 @@ def ddpgTune():
         for transition in buffs:
             transition[2] = scaled_reward
             buff.append(transition)
-            # print (transition)
+            print (transition)
     
         # save, udf and upload
         env.save_and_upload()
-
+    f.close()
     actor.save_model_weights('actor_weights.json')
     critic.save_model_weights('critic_weights.json')
     print("Finish.")

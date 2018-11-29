@@ -107,7 +107,8 @@ class OtterTuneEnv(object):
         nextstate = copy.copy(state)
         nextstate[knob_id] = action
         nextstate[self.N] = knob_id + 1
-        #print(nextstate)
+        #print('action', action)
+        #print('nextstate', nextstate)
         debug_info = {}
         reward = 0
         if knob_id < self.N - 1 and knob_id >= 0:
