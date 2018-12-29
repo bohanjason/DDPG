@@ -98,11 +98,13 @@ def write_log(f, current_state, readable_state, episode_i):
 def ddpgTune(): 
     DEBUG = True    #Print intermediate results for debugging
     BUFFER_SIZE = 10000
-    BATCH_SIZE = 32
-    GAMMA = 1.0     #Discount Factor
+    BATCH_SIZE = 64
+    GAMMA = 0 # 1.0     #Discount Factor
     TAU = 0.001     #Target Network HyperParameters
-    LRA = 0.0001    #Learning rate for Actor  1/32 ~ 0.03  , 0.0001
-    LRC = 0.001     #Lerning rate for Critic
+    LRA = 0.005    #Learning rate for Actor  1/32 ~ 0.03  , 0.0001
+    LRC = 0.005     #Lerning rate for Critic
+    TRAIN_C = 20 # Training epochs for Critic
+    TRAIN_A = 20 # Training epochs for Actor
 
     action_dim = 1  # set value (0,1)
     tuning_knobs_num = 4 # of tuning knobs
@@ -112,11 +114,11 @@ def ddpgTune():
     seed = 1234
     set_seed(seed)
 
-    episode_count = 3 #400 #000
+    episode_count = 300 #400 #000
     step = 0
 
     # Exploration
-    explore_episodes = 250
+    explore_episodes = 200
     explore_iters = tuning_knobs_num * explore_episodes
     
     # Exploration, epsilon greedy
@@ -178,7 +180,7 @@ def ddpgTune():
 
             nextstate, reward, is_terminal, debug_info = env.step(action, current_state)
             transition = [current_state, action, reward, nextstate, is_terminal]
-            X_samples, X_currstates, X_nextstates, X_rewards, X_actions = buff.sample_batch(batch_size=BATCH_SIZE)
+            X_samples, X_currstates, X_nextstates, X_rewards, X_actions = buff.sort_batch(batch_size=BATCH_SIZE)
             if len(X_samples) > 0:
                 X_nextactions = actor.target_model.predict(np.array(X_nextstates), batch_size=len(X_nextstates))
                 Y_nextstates = critic.target_model.predict([np.array(X_nextstates), np.array(X_nextactions)], batch_size=len(X_nextstates))
@@ -193,13 +195,14 @@ def ddpgTune():
                     i += 1
 
                 # update critic network
-                critic.model.fit([np.array(X_currstates), np.array(X_actions)], np.array(Y_minibatch), batch_size=len(X_currstates), epochs=1, verbose=0)
+                critic.model.fit([np.array(X_currstates), np.array(X_actions)], np.array(Y_minibatch), batch_size=len(X_currstates), epochs=TRAIN_C, verbose=0)
                 
-                a_for_grad = actor.model.predict([np.array(X_currstates)], batch_size=len(X_currstates))
-                grads = critic.gradients(X_currstates, a_for_grad)
-                mean_grads = 1.0 / len(X_currstates) * grads
-
-                actor.train(X_currstates, mean_grads)
+                for i in range(TRAIN_A):
+                    a_for_grad = actor.model.predict([np.array(X_currstates)], batch_size=len(X_currstates))
+                    grads = critic.gradients(X_currstates, a_for_grad)
+                    mean_grads = 1.0 / len(X_currstates) * grads
+                    actor.train(X_currstates, mean_grads)
+                
                 actor.target_train()
                 critic.target_train()
             else: # initial default config
@@ -239,6 +242,7 @@ def ddpgTune():
         config_reward = env.run_experiment()
         if episode_i == 0:
             default_reward = config_reward
+            # buff.burn_in()
 
         # scaled reward, latency: 1 - new/default
         scaled_reward = 1 - config_reward * 1.0 / default_reward
@@ -246,8 +250,7 @@ def ddpgTune():
         for transition in buffs:
             transition[2] = scaled_reward
             buff.append(transition)
-            print (transition)
-    
+ 
         # save, udf and upload
         env.save_and_upload()
     f.close()
