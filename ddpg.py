@@ -245,7 +245,7 @@ def ddpgTune():
             # buff.burn_in()
 
         # scaled reward, latency: 1 - new/default
-        scaled_reward = 1 - config_reward * 1.0 / default_reward
+        scaled_reward = 100 * (1 - config_reward * 1.0 / default_reward)
         print('reward ', config_reward, 'scaled ', scaled_reward)
         for transition in buffs:
             transition[2] = scaled_reward
